@@ -58,19 +58,19 @@ class Hook {
 	}
 
 	/**
-	* Triggers a hook to run all functions synchronously
-	* @example this.content.trigger(args).then(function(){...});
-	* @return {Array} results
-	*/
+   * Triggers a hook to run all functions synchronously
+   * @example this.content.trigger(args).then(function(){...});
+   * @return {Array} results
+   */
 	triggerSync(){
 		var args = arguments;
 		var context = this.context;
 		var results = [];
 
 		this.hooks.forEach(function(task) {
-			  var executing = task.apply(context, args);
+			var executing = task.apply(context, args);
 
-			  results.push(executing);
+			results.push(executing);
 		});
 
 

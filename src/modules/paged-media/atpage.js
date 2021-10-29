@@ -13,7 +13,6 @@ class AtPage extends Handler {
 		this.width = undefined;
 		this.height = undefined;
 		this.orientation = undefined;
-
 		this.marginalia = {};
 	}
 
@@ -27,14 +26,28 @@ class AtPage extends Handler {
 			width: undefined,
 			height: undefined,
 			orientation: undefined,
-			margin : {
+			margin: {
 				top: {},
 				right: {},
 				left: {},
 				bottom: {}
 			},
+			padding: {
+				top: {},
+				right: {},
+				left: {},
+				bottom: {}
+			},
+			border: {
+				top: {},
+				right: {},
+				left: {},
+				bottom: {}
+			},
+			backgroundOrigin: undefined,
 			block: {},
-			marks: undefined
+			marks: undefined,
+			notes: undefined
 		};
 	}
 
@@ -78,7 +91,10 @@ class AtPage extends Handler {
 			page.marginalia = marginalia;
 		}
 
-		let declarations = this.replaceDeclartations(node);
+		let notes = this.replaceNotes(node);
+		page.notes = notes;
+
+		let declarations = this.replaceDeclarations(node);
 
 		if (declarations.size) {
 			page.size = declarations.size;
@@ -141,6 +157,13 @@ class AtPage extends Handler {
 		if (declarations.margin) {
 			page.margin = declarations.margin;
 		}
+		if (declarations.padding) {
+			page.padding = declarations.padding;
+		}
+
+		if (declarations.border) {
+			page.border = declarations.border;
+		}
 
 		if (declarations.marks) {
 			page.marks = declarations.marks;
@@ -180,17 +203,26 @@ class AtPage extends Handler {
 			let orientation = this.pages["*"].orientation;
 			let bleed = this.pages["*"].bleed;
 			let marks = this.pages["*"].marks;
+			let bleedverso = undefined;
+			let bleedrecto = undefined;
 
+			if (":left" in this.pages) {
+				bleedverso = this.pages[":left"].bleed;
+			}
+
+			if (":right" in this.pages) {
+				bleedrecto = this.pages[":right"].bleed;
+			}
 
 			if ((width && height) &&
-					(this.width !== width || this.height !== height)) {
+				(this.width !== width || this.height !== height)) {
 				this.width = width;
 				this.height = height;
 				this.format = format;
 				this.orientation = orientation;
 
-				this.addRootVars(ast, width, height, orientation, bleed, marks);
-				this.addRootPage(ast, this.pages["*"].size, bleed);
+				this.addRootVars(ast, width, height, orientation, bleed, bleedrecto, bleedverso, marks);
+				this.addRootPage(ast, this.pages["*"].size, bleed, bleedrecto, bleedverso);
 
 				this.emit("size", { width, height, orientation, format, bleed });
 				this.emit("atpages", this.pages);
@@ -246,32 +278,56 @@ class AtPage extends Handler {
 
 	replaceMarginalia(ast) {
 		let parsed = {};
-
+		const MARGINS = [
+			"top-left-corner", "top-left", "top", "top-center", "top-right", "top-right-corner",
+			"bottom-left-corner", "bottom-left", "bottom", "bottom-center", "bottom-right", "bottom-right-corner",
+			"left-top", "left-middle", "left", "left-bottom", "top-right-corner",
+			"right-top", "right-middle", "right", "right-bottom", "right-right-corner"
+		];
 		csstree.walk(ast.block, {
 			visit: "Atrule",
 			enter: (node, item, list) => {
 				let name = node.name;
-				if (name === "top") {
-					name = "top-center";
+				if (MARGINS.includes(name)) {
+					if (name === "top") {
+						name = "top-center";
+					}
+					if (name === "right") {
+						name = "right-middle";
+					}
+					if (name === "left") {
+						name = "left-middle";
+					}
+					if (name === "bottom") {
+						name = "bottom-center";
+					}
+					parsed[name] = node.block;
+					list.remove(item);
 				}
-				if (name === "right") {
-					name = "right-middle";
-				}
-				if (name === "left") {
-					name = "left-middle";
-				}
-				if (name === "bottom") {
-					name = "bottom-center";
-				}
-				parsed[name] = node.block;
-				list.remove(item);
 			}
 		});
 
 		return parsed;
 	}
 
-	replaceDeclartations(ast) {
+	replaceNotes(ast) {
+		let parsed = {};
+
+		csstree.walk(ast.block, {
+			visit: "Atrule",
+			enter: (node, item, list) => {
+				let name = node.name;
+				if (name === "footnote") {
+					parsed[name] = node.block;
+					list.remove(item);
+				}
+			}
+		});
+
+		return parsed;
+	}
+
+	replaceDeclarations(ast) {
 		let parsed = {};
 
 		csstree.walk(ast.block, {
@@ -292,6 +348,7 @@ class AtPage extends Handler {
 				} else if (prop === "margin") {
 					parsed.margin = this.getMargins(declaration);
 					dList.remove(dItem);
+
 				} else if (prop.indexOf("margin-") === 0) {
 					let m = prop.substring("margin-".length);
 					if (!parsed.margin) {
@@ -304,7 +361,60 @@ class AtPage extends Handler {
 					}
 					parsed.margin[m] = declaration.value.children.first();
 					dList.remove(dItem);
-				} else if (prop === "size") {
+
+				} else if (prop === "padding") {
+					parsed.padding = this.getPaddings(declaration.value);
+					dList.remove(dItem);
+
+				} else if (prop.indexOf("padding-") === 0) {
+					let p = prop.substring("padding-".length);
+					if (!parsed.padding) {
+						parsed.padding = {
+							top: {},
+							right: {},
+							left: {},
+							bottom: {}
+						};
+					}
+					parsed.padding[p] = declaration.value.children.first();
+					dList.remove(dItem);
+				}
+
+				else if (prop === "border") {
+					if (!parsed.border) {
+						parsed.border = {
+							top: {},
+							right: {},
+							left: {},
+							bottom: {}
+						};
+					}
+					parsed.border.top = csstree.generate(declaration.value);
+					parsed.border.right = csstree.generate(declaration.value);
+					parsed.border.left = csstree.generate(declaration.value);
+					parsed.border.bottom = csstree.generate(declaration.value);
+
+					dList.remove(dItem);
+
+				}
+
+				else if (prop.indexOf("border-") === 0) {
+					if (!parsed.border) {
+						parsed.border = {
+							top: {},
+							right: {},
+							left: {},
+							bottom: {}
+						};
+					}
+					let p = prop.substring("border-".length);
+
+					parsed.border[p] = csstree.generate(declaration.value);
+					dList.remove(dItem);
+
+				}
+
+				else if (prop === "size") {
 					parsed.size = this.getSize(declaration);
 					dList.remove(dItem);
 				} else if (prop === "bleed") {
@@ -331,7 +441,7 @@ class AtPage extends Handler {
 									});
 									break;
 								default:
-									// ignore
+								// ignore
 							}
 
 						}
@@ -344,8 +454,8 @@ class AtPage extends Handler {
 		});
 
 		return parsed;
-	}
 
+	}
 	getSize(declaration) {
 		let width, height, orientation, format;
 
@@ -353,7 +463,7 @@ class AtPage extends Handler {
 		csstree.walk(declaration, {
 			visit: "Dimension",
 			enter: (node, item, list) => {
-				let {value, unit} = node;
+				let { value, unit } = node;
 				if (typeof width === "undefined") {
 					width = { value, unit };
 				} else if (typeof height === "undefined") {
@@ -411,9 +521,17 @@ class AtPage extends Handler {
 		};
 
 		csstree.walk(declaration, {
-			visit: "Dimension",
-			enter: (node, item, list) => {
-				margins.push(node);
+			enter: (node) => {
+				switch (node.type) {
+					case "Dimension": // margin: 1in 2in, margin: 20px, etc...
+						margins.push(node);
+						break;
+					case "Number": // margin: 0
+						margins.push({value: node.value, unit: "px"});
+						break;
+					default:
+					// ignore
+				}
 			}
 		});
 
@@ -441,50 +559,127 @@ class AtPage extends Handler {
 		return margin;
 	}
 
+	getPaddings(declaration) {
+		let paddings = [];
+		let padding = {
+			top: {},
+			right: {},
+			left: {},
+			bottom: {}
+		};
+
+		csstree.walk(declaration, {
+			enter: (node) => {
+				switch (node.type) {
+					case "Dimension": // padding: 1in 2in, padding: 20px, etc...
+						paddings.push(node);
+						break;
+					case "Number": // padding: 0
+						paddings.push({value: node.value, unit: "px"});
+						break;
+					default:
+					// ignore
+				}
+			}
+		});
+		if (paddings.length === 1) {
+			for (let p in padding) {
+				padding[p] = paddings[0];
+			}
+		} else if (paddings.length === 2) {
+
+			padding.top = paddings[0];
+			padding.right = paddings[1];
+			padding.bottom = paddings[0];
+			padding.left = paddings[1];
+		} else if (paddings.length === 3) {
+
+			padding.top = paddings[0];
+			padding.right = paddings[1];
+			padding.bottom = paddings[2];
+			padding.left = paddings[1];
+		} else if (paddings.length === 4) {
+
+			padding.top = paddings[0];
+			padding.right = paddings[1];
+			padding.bottom = paddings[2];
+			padding.left = paddings[3];
+		}
+		return padding;
+	}
+
+	// get values for the border on the @page to pass them to the element with the .pagedjs_area class
+	getBorders(declaration) {
+		let border = {
+			top: {},
+			right: {},
+			left: {},
+			bottom: {}
+		};
+
+		if (declaration.prop == "border") {
+			border.top = csstree.generate(declaration.value);
+			border.right = csstree.generate(declaration.value);
+			border.bottom = csstree.generate(declaration.value);
+			border.left = csstree.generate(declaration.value);
+
+		}
+		else if (declaration.prop == "border-top") {
+			border.top = csstree.generate(declaration.value);
+		}
+		else if (declaration.prop == "border-right") {
+			border.right = csstree.generate(declaration.value);
+
+		}
+		else if (declaration.prop == "border-bottom") {
+			border.bottom = csstree.generate(declaration.value);
+
+		}
+		else if (declaration.prop == "border-left") {
+			border.left = csstree.generate(declaration.value);
+		}
+
+		return border;
+	}
+
+
 	addPageClasses(pages, ast, sheet) {
 		// First add * page
-		if ("*" in pages && !pages["*"].added) {
+		if ("*" in pages) {
 			let p = this.createPage(pages["*"], ast.children, sheet);
 			sheet.insertRule(p);
-			pages["*"].added = true;
 		}
 		// Add :left & :right
-		if (":left" in pages && !pages[":left"].added) {
+		if (":left" in pages) {
 			let left = this.createPage(pages[":left"], ast.children, sheet);
 			sheet.insertRule(left);
-			pages[":left"].added = true;
 		}
-		if (":right" in pages && !pages[":right"].added) {
+		if (":right" in pages) {
 			let right = this.createPage(pages[":right"], ast.children, sheet);
 			sheet.insertRule(right);
-			pages[":right"].added = true;
 		}
 		// Add :first & :blank
-		if (":first" in pages && !pages[":first"].first) {
+		if (":first" in pages) {
 			let first = this.createPage(pages[":first"], ast.children, sheet);
 			sheet.insertRule(first);
-			pages[":first"].added = true;
 		}
-		if (":blank" in pages && !pages[":blank"].added) {
+		if (":blank" in pages) {
 			let blank = this.createPage(pages[":blank"], ast.children, sheet);
 			sheet.insertRule(blank);
-			pages[":blank"].added = true;
 		}
 		// Add nth pages
 		for (let pg in pages) {
-			if (pages[pg].nth && !pages[pg].added) {
+			if (pages[pg].nth) {
 				let nth = this.createPage(pages[pg], ast.children, sheet);
 				sheet.insertRule(nth);
-				pages[pg].added = true;
 			}
 		}
 
 		// Add named pages
 		for (let pg in pages) {
-			if (pages[pg].name && !pages[pg].added) {
+			if (pages[pg].name) {
 				let named = this.createPage(pages[pg], ast.children, sheet);
 				sheet.insertRule(named);
-				pages[pg].added = true;
 			}
 		}
 
@@ -499,9 +694,14 @@ class AtPage extends Handler {
 			loc: 0,
 			children: children
 		};
+
+
 		let rule = this.createRule(selectors, block);
 
 		this.addMarginVars(page.margin, children, children.first());
+		this.addPaddingVars(page.padding, children, children.first());
+		this.addBorderVars(page.border, children, children.first());
+
 
 		if (page.width) {
 			this.addDimensions(page.width, page.height, page.orientation, children, children.first());
@@ -510,6 +710,10 @@ class AtPage extends Handler {
 		if (page.marginalia) {
 			this.addMarginaliaStyles(page, ruleList, rule, sheet);
 			this.addMarginaliaContent(page, ruleList, rule, sheet);
+		}
+
+		if(page.notes) {
+			this.addNotesStyles(page.notes, page, ruleList, rule, sheet);
 		}
 
 		return rule;
@@ -529,6 +733,47 @@ class AtPage extends Handler {
 					}
 				});
 				list.append(mVar, item);
+
+			}
+		}
+	}
+
+	addPaddingVars(padding, list, item) {
+		// variables for padding
+		for (let p in padding) {
+
+			if (typeof padding[p].value !== "undefined") {
+				let value = padding[p].value + (padding[p].unit || "");
+				let pVar = list.createItem({
+					type: "Declaration",
+					property: "--pagedjs-padding-" + p,
+					value: {
+						type: "Raw",
+						value: value
+					}
+				});
+
+				list.append(pVar, item);
+			}
+
+		}
+	}
+
+	addBorderVars(border, list, item) {
+		// variables for borders
+		for (const name of Object.keys(border)) {
+			const value = border[name];
+			// value is an empty object when undefined
+			if (typeof value === "string") {
+				const borderItem = list.createItem({
+					type: "Declaration",
+					property: "--pagedjs-border-" + name,
+					value: {
+						type: "Raw",
+						value: value
+					}
+				});
+				list.append(borderItem, item);
 			}
 		}
 	}
@@ -563,7 +808,7 @@ class AtPage extends Handler {
 			let block = csstree.clone(page.marginalia[loc]);
 			let hasContent = false;
 
-			if(block.children.isEmpty()) {
+			if (block.children.isEmpty()) {
 				continue;
 			}
 
@@ -597,11 +842,11 @@ class AtPage extends Handler {
 
 					if (node.property === "width" &&
 						(loc === "top-left" ||
-						 loc === "top-center" ||
-						 loc === "top-right" ||
-						 loc === "bottom-left" ||
-						 loc === "bottom-center" ||
-						 loc === "bottom-right")) {
+							loc === "top-center" ||
+							loc === "top-right" ||
+							loc === "bottom-left" ||
+							loc === "bottom-center" ||
+							loc === "bottom-right")) {
 						let c = csstree.clone(node);
 						c.property = "max-width";
 						list.appendData(c);
@@ -609,11 +854,11 @@ class AtPage extends Handler {
 
 					if (node.property === "height" &&
 						(loc === "left-top" ||
-						 loc === "left-middle" ||
-						 loc === "left-bottom" ||
-						 loc === "right-top" ||
-						 loc === "right-middle" ||
-						 loc === "right-bottom")) {
+							loc === "left-middle" ||
+							loc === "left-bottom" ||
+							loc === "right-top" ||
+							loc === "right-middle" ||
+							loc === "right-bottom")) {
 						let c = csstree.clone(node);
 						c.property = "max-height";
 						list.appendData(c);
@@ -659,7 +904,7 @@ class AtPage extends Handler {
 				}
 			});
 
-			if(content.children.isEmpty()) {
+			if (content.children.isEmpty()) {
 				continue;
 			}
 
@@ -719,7 +964,7 @@ class AtPage extends Handler {
 		}
 	}
 
-	addRootVars(ast, width, height, orientation, bleed, marks) {
+	addRootVars(ast, width, height, orientation, bleed, bleedrecto, bleedverso, marks) {
 		let rules = [];
 		let selectors = new csstree.List();
 		selectors.insertData({
@@ -729,23 +974,79 @@ class AtPage extends Handler {
 		});
 
 		let widthString, heightString;
+		let widthStringRight, heightStringRight;
+		let widthStringLeft, heightStringLeft;
 
 		if (!bleed) {
 			widthString = CSSValueToString(width);
 			heightString = CSSValueToString(height);
+			widthStringRight = CSSValueToString(width);
+			heightStringRight = CSSValueToString(height);
+			widthStringLeft = CSSValueToString(width);
+			heightStringLeft = CSSValueToString(height);
 		} else {
 			widthString = `calc( ${CSSValueToString(width)} + ${CSSValueToString(bleed.left)} + ${CSSValueToString(bleed.right)} )`;
 			heightString = `calc( ${CSSValueToString(height)} + ${CSSValueToString(bleed.top)} + ${CSSValueToString(bleed.bottom)} )`;
+
+			widthStringRight = `calc( ${CSSValueToString(width)} + ${CSSValueToString(bleed.left)} + ${CSSValueToString(bleed.right)} )`;
+			heightStringRight = `calc( ${CSSValueToString(height)} + ${CSSValueToString(bleed.top)} + ${CSSValueToString(bleed.bottom)} )`;
+
+			widthStringLeft = `calc( ${CSSValueToString(width)} + ${CSSValueToString(bleed.left)} + ${CSSValueToString(bleed.right)} )`;
+			heightStringLeft = `calc( ${CSSValueToString(height)} + ${CSSValueToString(bleed.top)} + ${CSSValueToString(bleed.bottom)} )`;
 
 			let bleedTop = this.createVariable("--pagedjs-bleed-top", CSSValueToString(bleed.top));
 			let bleedRight = this.createVariable("--pagedjs-bleed-right", CSSValueToString(bleed.right));
 			let bleedBottom = this.createVariable("--pagedjs-bleed-bottom", CSSValueToString(bleed.bottom));
 			let bleedLeft = this.createVariable("--pagedjs-bleed-left", CSSValueToString(bleed.left));
 
+			let bleedTopRecto = this.createVariable("--pagedjs-bleed-right-top", CSSValueToString(bleed.top));
+			let bleedRightRecto = this.createVariable("--pagedjs-bleed-right-right", CSSValueToString(bleed.right));
+			let bleedBottomRecto = this.createVariable("--pagedjs-bleed-right-bottom", CSSValueToString(bleed.bottom));
+			let bleedLeftRecto = this.createVariable("--pagedjs-bleed-right-left", CSSValueToString(bleed.left));
+
+			let bleedTopVerso = this.createVariable("--pagedjs-bleed-left-top", CSSValueToString(bleed.top));
+			let bleedRightVerso = this.createVariable("--pagedjs-bleed-left-right", CSSValueToString(bleed.right));
+			let bleedBottomVerso = this.createVariable("--pagedjs-bleed-left-bottom", CSSValueToString(bleed.bottom));
+			let bleedLeftVerso = this.createVariable("--pagedjs-bleed-left-left", CSSValueToString(bleed.left));
+
+			if (bleedrecto) {
+				bleedTopRecto = this.createVariable("--pagedjs-bleed-right-top", CSSValueToString(bleedrecto.top));
+				bleedRightRecto = this.createVariable("--pagedjs-bleed-right-right", CSSValueToString(bleedrecto.right));
+				bleedBottomRecto = this.createVariable("--pagedjs-bleed-right-bottom", CSSValueToString(bleedrecto.bottom));
+				bleedLeftRecto = this.createVariable("--pagedjs-bleed-right-left", CSSValueToString(bleedrecto.left));
+
+				widthStringRight = `calc( ${CSSValueToString(width)} + ${CSSValueToString(bleedrecto.left)} + ${CSSValueToString(bleedrecto.right)} )`;
+				heightStringRight = `calc( ${CSSValueToString(height)} + ${CSSValueToString(bleedrecto.top)} + ${CSSValueToString(bleedrecto.bottom)} )`;
+			}
+			if (bleedverso) {
+				bleedTopVerso = this.createVariable("--pagedjs-bleed-left-top", CSSValueToString(bleedverso.top));
+				bleedRightVerso = this.createVariable("--pagedjs-bleed-left-right", CSSValueToString(bleedverso.right));
+				bleedBottomVerso = this.createVariable("--pagedjs-bleed-left-bottom", CSSValueToString(bleedverso.bottom));
+				bleedLeftVerso = this.createVariable("--pagedjs-bleed-left-left", CSSValueToString(bleedverso.left));
+
+				widthStringLeft = `calc( ${CSSValueToString(width)} + ${CSSValueToString(bleedverso.left)} + ${CSSValueToString(bleedverso.right)} )`;
+				heightStringLeft = `calc( ${CSSValueToString(height)} + ${CSSValueToString(bleedverso.top)} + ${CSSValueToString(bleedverso.bottom)} )`;
+			}
+
 			let pageWidthVar = this.createVariable("--pagedjs-width", CSSValueToString(width));
 			let pageHeightVar = this.createVariable("--pagedjs-height", CSSValueToString(height));
 
-			rules.push(bleedTop, bleedRight, bleedBottom, bleedLeft, pageWidthVar, pageHeightVar);
+			rules.push(
+				bleedTop,
+				bleedRight,
+				bleedBottom,
+				bleedLeft,
+				bleedTopRecto,
+				bleedRightRecto,
+				bleedBottomRecto,
+				bleedLeftRecto,
+				bleedTopVerso,
+				bleedRightVerso,
+				bleedBottomVerso,
+				bleedLeftVerso,
+				pageWidthVar,
+				pageHeightVar
+			);
 		}
 
 		if (marks) {
@@ -763,17 +1064,48 @@ class AtPage extends Handler {
 			if (orientation !== "portrait") {
 				// reverse for orientation
 				[widthString, heightString] = [heightString, widthString];
+				[widthStringRight, heightStringRight] = [heightStringRight, widthStringRight];
+				[widthStringLeft, heightStringLeft] = [heightStringLeft, widthStringLeft];
 			}
 		}
 
 		let wVar = this.createVariable("--pagedjs-width", widthString);
 		let hVar = this.createVariable("--pagedjs-height", heightString);
 
-		rules.push(wVar, hVar);
+		let wVarR = this.createVariable("--pagedjs-width-right", widthStringRight);
+		let hVarR = this.createVariable("--pagedjs-height-right", heightStringRight);
+
+		let wVarL = this.createVariable("--pagedjs-width-left", widthStringLeft);
+		let hVarL = this.createVariable("--pagedjs-height-left", heightStringLeft);
+
+		rules.push(wVar, hVar, wVarR, hVarR, wVarL, hVarL);
 
 		let rule = this.createRule(selectors, rules);
 
 		ast.children.appendData(rule);
+	}
+
+
+	addNotesStyles(notes, page, list, item, sheet) {
+
+		for (const note in notes) {
+			let selectors = this.selectorsForPage(page);
+
+			selectors.insertData({
+				type: "Combinator",
+				name: " "
+			});
+
+			selectors.insertData({
+				type: "ClassSelector",
+				name: "pagedjs_" + note + "_content"
+			});
+
+			let notesRule = this.createRule(selectors, notes[note]);
+
+			list.appendData(notesRule);
+		}
+
 	}
 
 	/*
@@ -783,10 +1115,14 @@ class AtPage extends Handler {
 		padding: 0;
 	}
 	*/
-	addRootPage(ast, size, bleed) {
+	addRootPage(ast, size, bleed, bleedrecto, bleedverso) {
 		let { width, height, orientation, format } = size;
 		let children = new csstree.List();
+		let childrenLeft = new csstree.List();
+		let childrenRight = new csstree.List();
 		let dimensions = new csstree.List();
+		let dimensionsLeft = new csstree.List();
+		let dimensionsRight = new csstree.List();
 
 		if (bleed) {
 			let widthCalculations = new csstree.List();
@@ -981,6 +1317,19 @@ class AtPage extends Handler {
 			}
 		});
 
+		children.appendData({
+			type: "Declaration",
+			property: "padding",
+			loc: null,
+			value: {
+				type: "Value",
+				children: [{
+					type: "Dimension",
+					unit: "px",
+					value: 0
+				}]
+			}
+		});
 
 		let rule = ast.children.createItem({
 			type: "Atrule",
@@ -994,6 +1343,294 @@ class AtPage extends Handler {
 		});
 
 		ast.children.append(rule);
+
+		if (bleedverso) {
+			let widthCalculationsLeft = new csstree.List();
+			let heightCalculationsLeft = new csstree.List();
+
+			// width
+			widthCalculationsLeft.appendData({
+				type: "Dimension",
+				unit: width.unit,
+				value: width.value
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "Dimension",
+				unit: bleedverso.left.unit,
+				value: bleedverso.left.value
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsLeft.appendData({
+				type: "Dimension",
+				unit: bleedverso.right.unit,
+				value: bleedverso.right.value
+			});
+
+			// height
+			heightCalculationsLeft.appendData({
+				type: "Dimension",
+				unit: height.unit,
+				value: height.value
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "Dimension",
+				unit: bleedverso.top.unit,
+				value: bleedverso.top.value
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsLeft.appendData({
+				type: "Dimension",
+				unit: bleedverso.bottom.unit,
+				value: bleedverso.bottom.value
+			});
+
+			dimensionsLeft.appendData({
+				type: "Function",
+				name: "calc",
+				children: widthCalculationsLeft
+			});
+
+			dimensionsLeft.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			dimensionsLeft.appendData({
+				type: "Function",
+				name: "calc",
+				children: heightCalculationsLeft
+			});
+
+			childrenLeft.appendData({
+				type: "Declaration",
+				property: "size",
+				loc: null,
+				value: {
+					type: "Value",
+					children: dimensionsLeft
+				}
+			});
+
+			let ruleLeft = ast.children.createItem({
+				type: "Atrule",
+				prelude: null,
+				name: "page :left",
+				block: {
+					type: "Block",
+					loc: null,
+					children: childrenLeft
+				}
+			});
+
+			ast.children.append(ruleLeft);
+
+		}
+
+		if (bleedrecto) {
+			let widthCalculationsRight = new csstree.List();
+			let heightCalculationsRight = new csstree.List();
+
+			// width
+			widthCalculationsRight.appendData({
+				type: "Dimension",
+				unit: width.unit,
+				value: width.value
+			});
+
+			widthCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsRight.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			widthCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsRight.appendData({
+				type: "Dimension",
+				unit: bleedrecto.left.unit,
+				value: bleedrecto.left.value
+			});
+
+			widthCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsRight.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			widthCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			widthCalculationsRight.appendData({
+				type: "Dimension",
+				unit: bleedrecto.right.unit,
+				value: bleedrecto.right.value
+			});
+
+			// height
+			heightCalculationsRight.appendData({
+				type: "Dimension",
+				unit: height.unit,
+				value: height.value
+			});
+
+			heightCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsRight.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			heightCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsRight.appendData({
+				type: "Dimension",
+				unit: bleedrecto.top.unit,
+				value: bleedrecto.top.value
+			});
+
+			heightCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsRight.appendData({
+				type: "Operator",
+				value: "+"
+			});
+
+			heightCalculationsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			heightCalculationsRight.appendData({
+				type: "Dimension",
+				unit: bleedrecto.bottom.unit,
+				value: bleedrecto.bottom.value
+			});
+
+			dimensionsRight.appendData({
+				type: "Function",
+				name: "calc",
+				children: widthCalculationsRight
+			});
+
+			dimensionsRight.appendData({
+				type: "WhiteSpace",
+				value: " "
+			});
+
+			dimensionsRight.appendData({
+				type: "Function",
+				name: "calc",
+				children: heightCalculationsRight
+			});
+
+			childrenRight.appendData({
+				type: "Declaration",
+				property: "size",
+				loc: null,
+				value: {
+					type: "Value",
+					children: dimensionsRight
+				}
+			});
+
+			let ruleRight = ast.children.createItem({
+				type: "Atrule",
+				prelude: null,
+				name: "page :right",
+				block: {
+					type: "Block",
+					loc: null,
+					children: childrenRight
+				}
+			});
+
+			ast.children.append(ruleRight);
+
+		}
 	}
 
 	getNth(nth) {
@@ -1046,10 +1683,6 @@ class AtPage extends Handler {
 			return;
 		}
 
-		if ((!content.children) && !(content.children && typeof content.children === "object" && content.children.constructor === Array)) {
-			return;
-		}
-
 		// No break
 		if (!node) {
 			return content.children[0];
@@ -1081,6 +1714,7 @@ class AtPage extends Handler {
 		if (start) {
 			this.addPageAttributes(page, start, chunker.pages);
 		}
+		// page.element.querySelector('.paged_area').style.color = red;
 	}
 
 	afterPageLayout(fragment, page, breakToken, chunker) {
@@ -1119,14 +1753,14 @@ class AtPage extends Handler {
 			if (centerContent) {
 				centerWidth = window.getComputedStyle(center)["max-width"];
 
-				if(centerWidth === "none" || centerWidth === "auto") {
-					if(!leftContent && !rightContent){
+				if (centerWidth === "none" || centerWidth === "auto") {
+					if (!leftContent && !rightContent) {
 						marginGroup.style["grid-template-columns"] = "0 1fr 0";
-					}else if(leftContent){
-						if(!rightContent){
-							if(leftWidth !== "none" && leftWidth !== "auto"){
+					} else if (leftContent) {
+						if (!rightContent) {
+							if (leftWidth !== "none" && leftWidth !== "auto") {
 								marginGroup.style["grid-template-columns"] = leftWidth + " 1fr " + leftWidth;
-							}else{
+							} else {
 								marginGroup.style["grid-template-columns"] = "auto auto 1fr";
 								left.style["white-space"] = "nowrap";
 								center.style["white-space"] = "nowrap";
@@ -1138,17 +1772,17 @@ class AtPage extends Handler {
 								left.style["white-space"] = "normal";
 								center.style["white-space"] = "normal";
 							}
-						}else{
-							if(leftWidth !== "none" && leftWidth !== "auto"){
-								if(rightWidth !== "none" && rightWidth !== "auto"){
+						} else {
+							if (leftWidth !== "none" && leftWidth !== "auto") {
+								if (rightWidth !== "none" && rightWidth !== "auto") {
 									marginGroup.style["grid-template-columns"] = leftWidth + " 1fr " + rightWidth;
-								}else{
+								} else {
 									marginGroup.style["grid-template-columns"] = leftWidth + " 1fr " + leftWidth;
 								}
-							}else{
-								if(rightWidth !== "none" && rightWidth !== "auto"){
+							} else {
+								if (rightWidth !== "none" && rightWidth !== "auto") {
 									marginGroup.style["grid-template-columns"] = rightWidth + " 1fr " + rightWidth;
-								}else{
+								} else {
 									marginGroup.style["grid-template-columns"] = "auto auto 1fr";
 									left.style["white-space"] = "nowrap";
 									center.style["white-space"] = "nowrap";
@@ -1158,9 +1792,9 @@ class AtPage extends Handler {
 									let rightOuterWidth = right.offsetWidth;
 									let outerwidths = leftOuterWidth + centerOuterWidth + rightOuterWidth;
 									let newcenterWidth = centerOuterWidth * 100 / outerwidths;
-									if(newcenterWidth > 40){
+									if (newcenterWidth > 40) {
 										marginGroup.style["grid-template-columns"] = "minmax(16.66%, 1fr) minmax(33%, " + newcenterWidth + "%) minmax(16.66%, 1fr)";
-									}else{
+									} else {
 										marginGroup.style["grid-template-columns"] = "repeat(3, 1fr)";
 									}
 									left.style["white-space"] = "normal";
@@ -1169,10 +1803,10 @@ class AtPage extends Handler {
 								}
 							}
 						}
-					}else{
-						if(rightWidth !== "none" && rightWidth !== "auto"){
+					} else {
+						if (rightWidth !== "none" && rightWidth !== "auto") {
 							marginGroup.style["grid-template-columns"] = rightWidth + " 1fr " + rightWidth;
-						}else{
+						} else {
 							marginGroup.style["grid-template-columns"] = "auto auto 1fr";
 							right.style["white-space"] = "nowrap";
 							center.style["white-space"] = "nowrap";
@@ -1185,32 +1819,32 @@ class AtPage extends Handler {
 							center.style["white-space"] = "normal";
 						}
 					}
-				}else if(centerWidth !== "none" && centerWidth !== "auto"){
-					if(leftContent && leftWidth !== "none" && leftWidth !== "auto"){
+				} else if (centerWidth !== "none" && centerWidth !== "auto") {
+					if (leftContent && leftWidth !== "none" && leftWidth !== "auto") {
 						marginGroup.style["grid-template-columns"] = leftWidth + " " + centerWidth + " 1fr";
-					}else if(rightContent && rightWidth !== "none" && rightWidth !== "auto"){
+					} else if (rightContent && rightWidth !== "none" && rightWidth !== "auto") {
 						marginGroup.style["grid-template-columns"] = "1fr " + centerWidth + " " + rightWidth;
-					}else{
+					} else {
 						marginGroup.style["grid-template-columns"] = "1fr " + centerWidth + " 1fr";
 					}
 
 				}
 
-			}else{
-				if(leftContent){
-					if(!rightContent){
+			} else {
+				if (leftContent) {
+					if (!rightContent) {
 						marginGroup.style["grid-template-columns"] = "1fr 0 0";
-					}else{
-						if(leftWidth !== "none" && leftWidth !== "auto"){
-							if(rightWidth !== "none" && rightWidth !== "auto"){
+					} else {
+						if (leftWidth !== "none" && leftWidth !== "auto") {
+							if (rightWidth !== "none" && rightWidth !== "auto") {
 								marginGroup.style["grid-template-columns"] = leftWidth + " 1fr " + rightWidth;
-							}else{
+							} else {
 								marginGroup.style["grid-template-columns"] = leftWidth + " 0 1fr";
 							}
-						}else{
-							if(rightWidth !== "none" && rightWidth !== "auto"){
+						} else {
+							if (rightWidth !== "none" && rightWidth !== "auto") {
 								marginGroup.style["grid-template-columns"] = "1fr 0 " + rightWidth;
-							}else{
+							} else {
 								marginGroup.style["grid-template-columns"] = "auto 1fr auto";
 								left.style["white-space"] = "nowrap";
 								right.style["white-space"] = "nowrap";
@@ -1218,16 +1852,16 @@ class AtPage extends Handler {
 								let rightOuterWidth = right.offsetWidth;
 								let outerwidths = leftOuterWidth + rightOuterWidth;
 								let newLeftWidth = leftOuterWidth * 100 / outerwidths;
-								marginGroup.style["grid-template-columns"] = "minmax(16.66%, " + newLeftWidth  + "%) 0 1fr";
+								marginGroup.style["grid-template-columns"] = "minmax(16.66%, " + newLeftWidth + "%) 0 1fr";
 								left.style["white-space"] = "normal";
 								right.style["white-space"] = "normal";
 							}
 						}
 					}
-				}else{
-					if(rightWidth !== "none" && rightWidth !== "auto"){
+				} else {
+					if (rightWidth !== "none" && rightWidth !== "auto") {
 						marginGroup.style["grid-template-columns"] = "1fr 0 " + rightWidth;
-					}else{
+					} else {
 						marginGroup.style["grid-template-columns"] = "0 0 1fr";
 					}
 				}
@@ -1255,66 +1889,66 @@ class AtPage extends Handler {
 			if (middle) {
 				middleHeight = window.getComputedStyle(middle)["max-height"];
 
-				if(middleHeight === "none" || middleHeight === "auto") {
-					if(!topContent && !bottomContent){
+				if (middleHeight === "none" || middleHeight === "auto") {
+					if (!topContent && !bottomContent) {
 						marginGroup.style["grid-template-rows"] = "0 1fr 0";
-					}else if(topContent){
-						if(!bottomContent){
-							if(topHeight !== "none" && topHeight !== "auto"){
+					} else if (topContent) {
+						if (!bottomContent) {
+							if (topHeight !== "none" && topHeight !== "auto") {
 								marginGroup.style["grid-template-rows"] = topHeight + " calc(100% - " + topHeight + "*2) " + topHeight;
 							}
-						}else{
-							if(topHeight !== "none" && topHeight !== "auto"){
-								if(bottomHeight !== "none" && bottomHeight !== "auto"){
+						} else {
+							if (topHeight !== "none" && topHeight !== "auto") {
+								if (bottomHeight !== "none" && bottomHeight !== "auto") {
 									marginGroup.style["grid-template-rows"] = topHeight + " calc(100% - " + topHeight + " - " + bottomHeight + ") " + bottomHeight;
-								}else{
+								} else {
 									marginGroup.style["grid-template-rows"] = topHeight + " calc(100% - " + topHeight + "*2) " + topHeight;
 								}
-							}else{
-								if(bottomHeight !== "none" && bottomHeight !== "auto"){
+							} else {
+								if (bottomHeight !== "none" && bottomHeight !== "auto") {
 									marginGroup.style["grid-template-rows"] = bottomHeight + " calc(100% - " + bottomHeight + "*2) " + bottomHeight;
 								}
 							}
 						}
-					}else{
-						if(bottomHeight !== "none" && bottomHeight !== "auto"){
+					} else {
+						if (bottomHeight !== "none" && bottomHeight !== "auto") {
 							marginGroup.style["grid-template-rows"] = bottomHeight + " calc(100% - " + bottomHeight + "*2) " + bottomHeight;
 						}
 					}
-				}else{
-					if(topContent && topHeight !== "none" && topHeight !== "auto"){
-						marginGroup.style["grid-template-rows"] = topHeight +" " + middleHeight + " calc(100% - (" + topHeight + " + " + middleHeight + "))";
-					}else if(bottomContent && bottomHeight !== "none" && bottomHeight !== "auto"){
+				} else {
+					if (topContent && topHeight !== "none" && topHeight !== "auto") {
+						marginGroup.style["grid-template-rows"] = topHeight + " " + middleHeight + " calc(100% - (" + topHeight + " + " + middleHeight + "))";
+					} else if (bottomContent && bottomHeight !== "none" && bottomHeight !== "auto") {
 						marginGroup.style["grid-template-rows"] = "1fr " + middleHeight + " " + bottomHeight;
-					}else{
+					} else {
 						marginGroup.style["grid-template-rows"] = "calc((100% - " + middleHeight + ")/2) " + middleHeight + " calc((100% - " + middleHeight + ")/2)";
 					}
 
 				}
 
-			}else{
-				if(topContent){
-					if(!bottomContent){
+			} else {
+				if (topContent) {
+					if (!bottomContent) {
 						marginGroup.style["grid-template-rows"] = "1fr 0 0";
-					}else{
-						if(topHeight !== "none" && topHeight !== "auto"){
-							if(bottomHeight !== "none" && bottomHeight !== "auto"){
+					} else {
+						if (topHeight !== "none" && topHeight !== "auto") {
+							if (bottomHeight !== "none" && bottomHeight !== "auto") {
 								marginGroup.style["grid-template-rows"] = topHeight + " 1fr " + bottomHeight;
-							}else{
+							} else {
 								marginGroup.style["grid-template-rows"] = topHeight + " 0 1fr";
 							}
-						}else{
-							if(bottomHeight !== "none" && bottomHeight !== "auto"){
+						} else {
+							if (bottomHeight !== "none" && bottomHeight !== "auto") {
 								marginGroup.style["grid-template-rows"] = "1fr 0 " + bottomHeight;
-							}else{
+							} else {
 								marginGroup.style["grid-template-rows"] = "1fr 0 1fr";
 							}
 						}
 					}
-				}else{
-					if(bottomHeight !== "none" && bottomHeight !== "auto"){
+				} else {
+					if (bottomHeight !== "none" && bottomHeight !== "auto") {
 						marginGroup.style["grid-template-rows"] = "1fr 0 " + bottomHeight;
-					}else{
+					} else {
 						marginGroup.style["grid-template-rows"] = "0 0 1fr";
 					}
 				}
@@ -1434,7 +2068,7 @@ class AtPage extends Handler {
 		};
 	}
 
-	createCalculatedDimension(property, items, important, operator="+") {
+	createCalculatedDimension(property, items, important, operator = "+") {
 		let children = new csstree.List();
 		let calculations = new csstree.List();
 

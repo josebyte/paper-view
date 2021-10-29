@@ -1,5 +1,5 @@
 import Handler from "../handler";
-import { UUID, attr, querySelectorEscape } from "../../utils/utils";
+import {attr, querySelectorEscape, UUID} from "../../utils/utils";
 import csstree from "css-tree";
 
 class TargetCounters extends Handler {
@@ -14,6 +14,7 @@ class TargetCounters extends Handler {
 	onContent(funcNode, fItem, fList, declaration, rule) {
 		if (funcNode.name === "target-counter") {
 			let selector = csstree.generate(rule.ruleNode.prelude);
+
 			let first = funcNode.children.first();
 			let func = first.name;
 
@@ -23,6 +24,7 @@ class TargetCounters extends Handler {
 
 			first.children.forEach((child) => {
 				if (child.type === "Identifier") {
+
 					args.push(child.name);
 				}
 			});
@@ -65,6 +67,7 @@ class TargetCounters extends Handler {
 				loc: 0,
 				name: variable
 			});
+
 			if (styleIdentifier) {
 				funcNode.children.appendData({type: "Operator", loc: null, value: ","});
 				funcNode.children.appendData(styleIdentifier);
@@ -92,33 +95,44 @@ class TargetCounters extends Handler {
 					let selector = UUID();
 					selected.setAttribute("data-" + target.variable, selector);
 					// TODO: handle other counter types (by query)
-					let psuedo = "";
+					let pseudo = "";
+					if (split.length > 1) {
+						pseudo += "::" + split[1];
+					}
 					if (target.counter === "page") {
 						let pages = chunker.pagesArea.querySelectorAll(".pagedjs_page");
 						let pg = 0;
-						for (var i = 0; i < pages.length; i++) {
-							let styles = window.getComputedStyle(pages[i]);
+						for (let i = 0; i < pages.length; i++) {
+							let page = pages[i];
+							let styles = window.getComputedStyle(page);
 							let reset = styles["counter-reset"].replace("page", "").trim();
+							let increment = styles["counter-increment"].replace("page", "").trim();
 
 							if (reset !== "none") {
 								pg = parseInt(reset);
 							}
-							pg += 1;
+							if (increment !== "none") {
+								pg += parseInt(increment);
+							}
 
-							if (pages[i].contains( element )){
+							if (page.contains(element)){
 								break;
 							}
 						}
-
-						if (split.length > 1) {
-							psuedo += "::" + split[1];
-						}
-						this.styleSheet.insertRule(`[data-${target.variable}="${selector}"]${psuedo} { counter-reset: ${target.variable} ${pg}; }`, this.styleSheet.cssRules.length);
+						this.styleSheet.insertRule(`[data-${target.variable}="${selector}"]${pseudo} { counter-reset: ${target.variable} ${pg}; }`, this.styleSheet.cssRules.length);
 					} else {
 						let value = element.getAttribute(`data-counter-${target.counter}-value`);
 						if (value) {
-							this.styleSheet.insertRule(`[data-${target.variable}="${selector}"]${psuedo} { counter-reset: ${target.variable} ${target.variable} ${parseInt(value)}; }`, this.styleSheet.cssRules.length);
+							this.styleSheet.insertRule(`[data-${target.variable}="${selector}"]${pseudo} { counter-reset: ${target.variable} ${target.variable} ${parseInt(value)}; }`, this.styleSheet.cssRules.length);
 						}
+					}
+
+					// force redraw
+					let el = document.querySelector(`[data-${target.variable}="${selector}"]`);
+					if (el) {
+						el.style.display = "none";
+						el.clientHeight;
+						el.style.removeProperty("display");
 					}
 				}
 			});

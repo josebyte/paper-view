@@ -8,6 +8,7 @@ import {
 } from "../utils/utils";
 
 const MAX_PAGES = false;
+const MAX_LAYOUTS = false;
 
 const TEMPLATE = `
 <div class="pagedjs_page">
@@ -55,9 +56,6 @@ const TEMPLATE = `
 				<div class="pagedjs_margin pagedjs_margin-right-middle"><div class="pagedjs_margin-content"></div></div>
 				<div class="pagedjs_margin pagedjs_margin-right-bottom"><div class="pagedjs_margin-content"></div></div>
 			</div>
-			<div class="pagedjs_area">
-				<div class="pagedjs_page_content"></div>
-			</div>
 			<div class="pagedjs_margin-left">
 				<div class="pagedjs_margin pagedjs_margin-left-top"><div class="pagedjs_margin-content"></div></div>
 				<div class="pagedjs_margin pagedjs_margin-left-middle"><div class="pagedjs_margin-content"></div></div>
@@ -74,7 +72,14 @@ const TEMPLATE = `
 			<div class="pagedjs_margin-bottom-right-corner-holder">
 				<div class="pagedjs_margin pagedjs_margin-bottom-right-corner"><div class="pagedjs_margin-content"></div></div>
 			</div>
-			
+			<div class="pagedjs_area">
+				<div class="pagedjs_page_content"></div>
+				<div class="pagedjs_footnote_area">
+					<div class="pagedjs_footnote_content pagedjs_footnote_empty">
+						<div class="pagedjs_footnote_inner_content"></div>
+					</div>
+				</div>
+			</div>
 		</div>
 	</div>
 </div>`;
@@ -84,23 +89,27 @@ const TEMPLATE = `
  * @class
  */
 class Chunker {
-	constructor(content, renderTo) {
+	constructor(content, renderTo, options) {
 		// this.preview = preview;
+
+		this.settings = options || {};
 
 		this.hooks = {};
 		this.hooks.beforeParsed = new Hook(this);
+		this.hooks.filter = new Hook(this);
 		this.hooks.afterParsed = new Hook(this);
 		this.hooks.beforePageLayout = new Hook(this);
 		this.hooks.layout = new Hook(this);
 		this.hooks.renderNode = new Hook(this);
 		this.hooks.layoutNode = new Hook(this);
 		this.hooks.onOverflow = new Hook(this);
+		this.hooks.afterOverflowRemoved = new Hook(this);
 		this.hooks.onBreakToken = new Hook();
 		this.hooks.afterPageLayout = new Hook(this);
 		this.hooks.afterRendered = new Hook(this);
 
 		this.pages = [];
-		this._total = 0;
+		this.total = 0;
 
 		this.q = new Queue(this);
 		this.stopped = false;
@@ -122,11 +131,8 @@ class Chunker {
 
 		if (renderTo) {
 			renderTo.appendChild(this.pagesArea);
-			renderTo.classList.add("paper_view_content_root");
 		} else {
-			let body = document.querySelector("body");
-			body.appendChild(this.pagesArea);
-			body.classList.add("paper_view_content_root");
+			document.querySelector("body").appendChild(this.pagesArea);
 		}
 
 		this.pageTemplate = document.createElement("template");
@@ -141,6 +147,8 @@ class Chunker {
 
 		parsed = new ContentParser(content);
 
+		this.hooks.filter.triggerSync(parsed);
+
 		this.source = parsed;
 		this.breakToken = undefined;
 
@@ -151,7 +159,7 @@ class Chunker {
 			this.setup(renderTo);
 		}
 
-		this.emit("rendering", content);
+		this.emit("rendering", parsed);
 
 		await this.hooks.afterParsed.trigger(parsed, this);
 
@@ -164,10 +172,13 @@ class Chunker {
 		}
 
 		this.rendered = true;
+		this.pagesArea.style.setProperty("--pagedjs-page-count", this.total);
 
 		await this.hooks.afterRendered.trigger(this.pages, this);
 
 		this.emit("rendered", this.pages);
+
+
 
 		return this;
 	}
@@ -201,14 +212,22 @@ class Chunker {
 	// }
 
 	async render(parsed, startAt) {
-		let renderer = this.layout(parsed, startAt);
+		let renderer = this.layout(parsed, startAt, this.settings);
 
 		let done = false;
 		let result;
 
+		let loops = 0;
 		while (!done) {
 			result = await this.q.enqueue(() => { return this.renderAsync(renderer); });
 			done = result.done;
+			if(MAX_LAYOUTS) {
+				loops += 1;
+				if (loops >= MAX_LAYOUTS) {
+					this.stop();
+					break;
+				}
+			}
 		}
 
 		return result;
@@ -252,7 +271,7 @@ class Chunker {
 		}
 	}
 
-	async handleBreaks(node) {
+	async handleBreaks(node, force) {
 		let currentPage = this.total + 1;
 		let currentPosition = currentPage % 2 === 0 ? "left" : "right";
 		// TODO: Recto and Verso should reverse for rtl languages
@@ -277,7 +296,9 @@ class Chunker {
 			breakBefore = node.dataset.breakBefore;
 		}
 
-		if( previousBreakAfter &&
+		if (force) {
+			page = this.addPage(true);
+		} else if( previousBreakAfter &&
 				(previousBreakAfter === "left" || previousBreakAfter === "right") &&
 				previousBreakAfter !== currentPosition) {
 			page = this.addPage(true);
@@ -307,7 +328,7 @@ class Chunker {
 	async *layout(content, startAt) {
 		let breakToken = startAt || false;
 
-		while (breakToken !== undefined && (MAX_PAGES ? (this.total < MAX_PAGES) : true)) {
+		while (breakToken !== undefined && (MAX_PAGES ? this.total < MAX_PAGES : true)) {
 
 			if (breakToken && breakToken.node) {
 				await this.handleBreaks(breakToken.node);
@@ -332,6 +353,8 @@ class Chunker {
 
 			// Stop if we get undefined, showing we have reached the end of the content
 		}
+
+
 	}
 
 	recoredCharLength(length) {
@@ -365,6 +388,8 @@ class Chunker {
 		} else {
 			this.pages = [];
 		}
+
+		this.total = this.pages.length;
 	}
 
 	addPage(blank) {
@@ -468,33 +493,47 @@ class Chunker {
 	}
 	*/
 
-	get total() {
-		return this._total;
-	}
+	async clonePage(originalPage) {
+		let lastPage = this.pages[this.pages.length - 1];
 
-	set total(num) {
-		this.pagesArea.style.setProperty("--pagedjs-page-count", num);
-		this._total = num;
+		let page = new Page(this.pagesArea, this.pageTemplate, false, this.hooks);
+
+		this.pages.push(page);
+
+		// Create the pages
+		page.create(undefined, lastPage && lastPage.element);
+
+		page.index(this.total);
+
+		await this.hooks.beforePageLayout.trigger(page, undefined, undefined, this);
+		this.emit("page", page);
+
+		for (const className of originalPage.element.classList) {
+			if (className !== "pagedjs_left_page" && className !== "pagedjs_right_page") {
+				page.element.classList.add(className);
+			}
+		}
+
+		await this.hooks.afterPageLayout.trigger(page.element, page, undefined, this);
+		this.emit("renderedPage", page);
 	}
 
 	loadFonts() {
 		let fontPromises = [];
-		if (document.fonts) {
-			document.fonts.forEach((fontFace) => {
-				if (fontFace.status !== "loaded") {
-					let fontLoaded = fontFace.load().then((r) => {
-						return fontFace.family;
-					}, (r) => {
-						console.warn("Failed to preload font-family:", fontFace.family);
-						return fontFace.family;
-					});
-					fontPromises.push(fontLoaded);
-				}
-			});
-			return Promise.all(fontPromises).catch((err) => {
-				console.warn(err);
-			});
-		}
+		(document.fonts || []).forEach((fontFace) => {
+			if (fontFace.status !== "loaded") {
+				let fontLoaded = fontFace.load().then((r) => {
+					return fontFace.family;
+				}, (r) => {
+					console.warn("Failed to preload font-family:", fontFace.family);
+					return fontFace.family;
+				});
+				fontPromises.push(fontLoaded);
+			}
+		});
+		return Promise.all(fontPromises).catch((err) => {
+			console.warn(err);
+		});
 	}
 
 	destroy() {

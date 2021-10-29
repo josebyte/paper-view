@@ -1,6 +1,6 @@
 import Handler from "../handler";
 import csstree from "css-tree";
-import { elementAfter } from "../../utils/dom";
+import { displayedElementAfter, displayedElementBefore, needsPageBreak } from "../../utils/dom";
 
 class Breaks extends Handler {
 	constructor(chunker, polisher, caller) {
@@ -83,20 +83,34 @@ class Breaks extends Handler {
 				for (let prop of breaks[b]) {
 
 					if (prop.property === "break-after") {
-						let nodeAfter = elementAfter(elements[i], parsed);
+						let nodeAfter = displayedElementAfter(elements[i], parsed);
 
-						elements[i].dataset.breakAfter = prop.value;
+						elements[i].setAttribute("data-break-after", prop.value);
 
 						if (nodeAfter) {
-							nodeAfter.dataset.previousBreakAfter = prop.value;
+							nodeAfter.setAttribute("data-previous-break-after", prop.value);
+						}
+					} else if (prop.property === "break-before") {
+						let nodeBefore = displayedElementBefore(elements[i], parsed);
+
+						// Breaks are only allowed between siblings, not between a box and its container.
+						// If we cannot find a node before we should not break!
+						// https://drafts.csswg.org/css-break-3/#break-propagation
+						if (nodeBefore) {
+							if (prop.value === "page" && needsPageBreak(elements[i], nodeBefore)) {
+								// we ignore this explicit page break because an implicit page break is already needed
+								continue;
+							}
+							elements[i].setAttribute("data-break-before", prop.value);
+							nodeBefore.setAttribute("data-next-break-before", prop.value);
 						}
 					} else if (prop.property === "page") {
-						elements[i].dataset.page = prop.value;
+						elements[i].setAttribute("data-page", prop.value);
 
-						let nodeAfter = elementAfter(elements[i], parsed);
+						let nodeAfter = displayedElementAfter(elements[i], parsed);
 
 						if (nodeAfter) {
-							nodeAfter.dataset.afterPage = prop.value;
+							nodeAfter.setAttribute("data-after-page", prop.value);
 						}
 					} else {
 						elements[i].setAttribute("data-" + prop.property, prop.value);
@@ -125,20 +139,20 @@ class Breaks extends Handler {
 		if (before) {
 			if (before.dataset.splitFrom) {
 				page.splitFrom = before.dataset.splitFrom;
-				pageElement.dataset.splitFrom = before.dataset.splitFrom;
+				pageElement.setAttribute("data-split-from", before.dataset.splitFrom);
 			} else if (before.dataset.breakBefore && before.dataset.breakBefore !== "avoid") {
 				page.breakBefore = before.dataset.breakBefore;
-				pageElement.dataset.breakBefore = before.dataset.breakBefore;
+				pageElement.setAttribute("data-break-before", before.dataset.breakBefore);
 			}
 		}
 
 		if (after && after.dataset) {
 			if (after.dataset.splitTo) {
 				page.splitTo = after.dataset.splitTo;
-				pageElement.dataset.splitTo = after.dataset.splitTo;
+				pageElement.setAttribute("data-split-to", after.dataset.splitTo);
 			} else if (after.dataset.breakAfter && after.dataset.breakAfter !== "avoid") {
 				page.breakAfter = after.dataset.breakAfter;
-				pageElement.dataset.breakAfter = after.dataset.breakAfter;
+				pageElement.setAttribute("data-break-after", after.dataset.breakAfter);
 			}
 		}
 

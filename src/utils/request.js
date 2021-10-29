@@ -8,7 +8,7 @@ export default async function request(url, options={}) {
 			request.setRequestHeader(i, options.headers[i]);
 		}
 
-		request.withCredentials = options.credentials=="include";
+		request.withCredentials = options.credentials === "include";
 
 		request.onload = () => {
 			// Chrome returns a status code of 0 for local files
